@@ -5,17 +5,21 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 function run(p, inp) {
-  const D = new Int32Array(256);
+  // Named limits from ISA.md (same values, same behaviour as the first version).
+  const MAX_STEPS = 1_000_000, MAX_OUTPUT = 65536;
+  const STACK_SIZE = 256, MEM_WORDS = 256, CALL_DEPTH = 64;
+  const INT32_MIN = -2147483648;
+  const D = new Int32Array(STACK_SIZE);
   let sp = 0;
-  const C = new Int32Array(64);
+  const C = new Int32Array(CALL_DEPTH);
   let cs = 0;
-  const M = new Int32Array(256);
-  const out = new Uint8Array(65536);
+  const M = new Int32Array(MEM_WORDS);
+  const out = new Uint8Array(MAX_OUTPUT);
   let ol = 0, ip = 0, pc = 0, st = 0;
   const n = p.length;
   const fin = (c) => ({ o: out.slice(0, ol), c });
   for (;;) {
-    if (st === 1e6) return fin(10);
+    if (st === MAX_STEPS) return fin(10);
     if (pc < 0 || pc >= n) return fin(9);
     const o = p[pc];
     let im = 0, po = 0, pu = 0;
@@ -30,7 +34,7 @@ function run(p, inp) {
     st++;
     const nx = pc + 1 + im;
     if (sp < po) return fin(2);
-    if (sp - po + pu > 256) return fin(3);
+    if (sp - po + pu > STACK_SIZE) return fin(3);
     pc = nx;
     if (o < 8) {
       if (o === 0) return fin(0);
@@ -51,7 +55,7 @@ function run(p, inp) {
       if (o === 16) r = (a + b) | 0;
       else if (o === 17) r = (a - b) | 0;
       else if (o === 18) r = Math.imul(a, b);
-      else if (o === 19) { if (!b) return fin(4); r = a === -2147483648 && b === -1 ? a : (a / b) | 0; }
+      else if (o === 19) { if (!b) return fin(4); r = a === INT32_MIN && b === -1 ? a : (a / b) | 0; }
       else if (o === 20) { if (!b) return fin(4); r = b === -1 ? 0 : (a % b) | 0; }
       else if (o === 21) { if (!b) return fin(4); r = Math.floor((a >>> 0) / (b >>> 0)) | 0; }
       else if (o === 22) { if (!b) return fin(4); r = ((a >>> 0) % (b >>> 0)) | 0; }
@@ -68,7 +72,7 @@ function run(p, inp) {
       continue;
     }
     if (o >= 48 && o <= 52) {
-      if (o === 51) { if (cs === 64) return fin(7); C[cs++] = nx; pc = p[nx - 2] | (p[nx - 1] << 8); continue; }
+      if (o === 51) { if (cs === CALL_DEPTH) return fin(7); C[cs++] = nx; pc = p[nx - 2] | (p[nx - 1] << 8); continue; }
       if (o === 52) { if (cs === 0) return fin(8); pc = C[--cs]; continue; }
       const rel = ((p[nx - 2] | (p[nx - 1] << 8)) << 16) >> 16;
       if (o === 48) { pc = nx + rel; continue; }
@@ -80,12 +84,12 @@ function run(p, inp) {
     if (o === 65) { const a = D[sp - 1], v = D[sp - 2]; if (a < 0 || a > 255) return fin(6); sp -= 2; M[a] = v; continue; }
     if (o === 80) {
       const s = String(D[sp - 1]);
-      if (ol + s.length > 65536) return fin(11);
+      if (ol + s.length > MAX_OUTPUT) return fin(11);
       sp--;
       for (let i = 0; i < s.length; i++) out[ol++] = s.charCodeAt(i);
       continue;
     }
-    if (o === 81) { if (ol + 1 > 65536) return fin(11); out[ol++] = D[--sp] & 255; continue; }
+    if (o === 81) { if (ol + 1 > MAX_OUTPUT) return fin(11); out[ol++] = D[--sp] & 255; continue; }
     if (o === 82) { D[sp++] = ip < inp.length ? inp[ip++] : -1; continue; }
     return fin(D[--sp] & 255);
   }
